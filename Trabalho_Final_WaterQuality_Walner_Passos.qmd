@@ -1,0 +1,760 @@
+---
+execute:
+  echo: false
+title: "Programa de Engenharia Biomédica"
+subtitle: "Estudo de métodos para classificação de amostras de água quanto a potabilidade utilizando características químicas das amostras"
+date: "15/07/2025"
+format:
+  html:
+   theme: superhero # https://quarto.org/docs/output-formats/html-themes.html
+   css: styles.css
+   toc: true
+   toc-depth: 2
+   number-sections: false
+    ##code-fold: false
+   code-tools: false
+   df-print: paged
+editor: visual
+---
+
+**Discente:** Walner Passos\
+**Docente :** Leticia Raposo e Diogo Antônio Tschoeke
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+# Carregando pacotes necessários
+
+library(tidyverse)
+library(summarytools)
+library(ggplot2)
+library(esquisse)
+library(gtsummary)
+library(flextable)
+library(ggcorrplot)
+library(corrplot)
+library(dplyr)
+library(caret)
+library(pROC)
+library(ROSE)
+library(ROCR)
+library(randomForest)
+
+```
+
+# Análise Exploratória de Dados (EDA)
+
+## Apresentação do Conjunto de Dados
+
+Usaremos o conjunto de dados **WaterQuality** disponível no **Kaggle** em **https://www.kaggle.com/datasets/mssmartypants/water-quality/data**. Este é um conjunto de dados foi criado a partir de dados imaginários sobre a qualidade da água em um ambiente urbano.
+
+## Carga e Visualização Inicial dos Dados
+
+```{r carregamento dos dados, message=FALSE, warning=FALSE}
+# Carregar o dataset
+dados <- read.csv("waterQuality.csv")
+
+
+
+
+```
+
+### Resumo dos dados:
+
+-   Número de Linha: 7999
+-   Número de Variáveis: 20
+-   Rótulo: 1
+
+| Variáveis explicativas | Tipo de dado | perigoso \> que |
+|:-----------------------|:------------:|----------------:|
+| aluminium              | quantitativa |             2.8 |
+| ammonia                | quantitativa |            32.5 |
+| arsenic                | quantitativa |            0.01 |
+| barium                 | quantitativa |               2 |
+| cádmium                | quantitativa |           0.005 |
+| chloramine             | quantitativa |               4 |
+| chromium               | quantitativa |             0.1 |
+| copper                 | quantitativa |             1.3 |
+| flouride               | quantitativa |             1.5 |
+| bactéria               | quantitativa |               0 |
+| viroses                | quantitativa |               0 |
+| lead                   | quantitativa |           0.015 |
+| nitrates               | quantitativa |              10 |
+| nitrites               | quantitativa |               1 |
+| Mercury                | quantitativa |           0.002 |
+| perchlorate            | quantitativa |              56 |
+| radium                 | quantitativa |               5 |
+| selenium               | quantitativa |             0.5 |
+| silver                 | quantitativa |             0.1 |
+| uranium                | quantitativa |             0.3 |
+
+| variável resposta | Tipo de dado | Observação |
+|-------------------|--------------|------------|
+| is_safe           | chr          | "0", "1"   |
+
+### Informação Dataset
+
+#### Variáveis
+
+```{r}
+## Análise das Variáveis
+# Visualização inicial dos dados
+str(dados)
+
+```
+
+#### Análise estatística dos dados
+
+```{r}
+summary(dados)
+```
+
+## Limpeza e Preparação dos Dados
+
+-   **Sem dados faltantes:**
+
+```{r}
+  cat(paste('    Número dados faltantes : ', sum(is.na(dados))))
+```
+
+-   **Analise variável Ammonia**
+
+```{r, warning=FALSE}
+cat(paste("     Confirmando tipo de dado da variável: ", typeof(dados$ammonia)))
+cat("     Alterando o tipo de dados ")
+invisible(dados$ammonia <- as.numeric(dados$ammonia))
+cat(paste("     Confirmando alteração ", typeof(dados$ammonia)))
+cat(paste("     Verificando inconcistência: ", sum(is.na(dados$ammonia))))
+cat("     Excluuindo registros: ")
+dados <- filter(dados, dados$ammonia != "Na")
+cat(paste("     Confirmando exclusão:" ,sum(is.na(dados$ammonia))))
+```
+
+-   **Análise dos rótulos**
+
+```{r}
+cat("     Rotulos:", unique(dados$is_safe))
+
+```
+
+-   **Alterado as descrições do rotulo ( "0" - NÃO / "1" - SIM )**
+
+```{r}
+cat("     Alterando os rótulos...  ")
+dados$is_safe <- factor(dados$is_safe, levels = c('0','1'), labels = c("NÃO", "SIM"))
+cat("     Confirmando alteração: ", levels(dados$is_safe))
+
+```
+
+## Análise dos dados
+
+### Balanceamento
+
+```{r}
+# Frequência e porcentagem
+freq <- table(dados$is_safe)
+porc <- prop.table(freq) * 100
+counts <- table(dados$is_safe)
+
+
+# Gráfico
+bp <- barplot(porc,
+              ylim = c(0, max(porc) + 5),
+              main = "Rótulos",
+              ylab = "Porcentagem",
+              col = "lightblue")
+
+
+text(
+  x = bp, 
+  y = porc / 2, 
+  labels = counts, 
+  col = "black", 
+  cex = 0.9
+)
+```
+
+### Análise Univariada
+
+```{r}
+
+# Estatísticas descritivas
+descr(dados)
+
+# Tabela Descritiva
+theme_gtsummary_language(
+  language = "pt",       # Define o idioma para Português
+  decimal.mark = ",",    # Define a vírgula como separador decimal
+  big.mark = ".",        # Define o ponto como separador de milhares
+  iqr.sep = "-",         # Define o hífen como separador para intervalos interquartis
+  ci.sep = "-",          # Define o hífen como separador para intervalos de confiança
+  set_theme = TRUE       # Aplica essas configurações como tema padrão para as tabelas
+)
+list("tbl_summary-fn:percent_fun" = function(x) sprintf(x * 100, fmt='%#.1f')) %>%
+  set_gtsummary_theme()  # Aplica a função personalizada de formatação de porcentagens como tema padrão
+
+tbl_summary(
+  dados,
+  statistic = list(
+    all_continuous() ~ "{median} ({p25} - {p75}); min={min}, max={max}",
+    all_categorical() ~ "{n} ({p}%)"
+  )
+)
+
+```
+
+```{r, results="hide"}
+
+# Seleciona apenas colunas numéricas
+numeric_vars <- dados[sapply(dados, is.numeric)]
+
+# Layout para múltiplos gráficos
+par(mfrow = c(1, 2))
+
+# Loop para criar histogramas
+lapply(names(numeric_vars), function(var) {
+  boxplot(numeric_vars[[var]],
+       main = var,
+       col = "lightblue",
+       border = "black",
+       xlab = var)
+})
+
+# Restaurar layout padrão
+par(mfrow = c(1, 1))
+```
+
+### Análise Bivariada
+
+```{r, results="hide"}
+
+# Seleciona apenas colunas numéricas
+numeric_vars <- dados[sapply(dados, is.numeric)]
+
+# Layout para múltiplos gráficos
+par(mfrow = c(1, 2))
+
+# Loop para criar histogramas
+lapply(names(numeric_vars), function(var) {
+  p <- ggplot(dados, aes_string(x = "as.factor(is_safe)", y = var, fill = "as.factor(is_safe)")) +
+    geom_boxplot(alpha = 0.6) +
+    stat_summary(fun = mean, geom = "point", shape = 20, size = 4, color = "red") +
+    labs(x = "Is Safe", y = var,
+         title = paste("Distribuição de", var, "na classificação")) +
+    theme_minimal() +
+    theme(legend.position = "none")
+  
+  # Teste t para a variável corrente
+  f <- as.formula(paste(var, "~ is_safe"))
+  t_result <- t.test(f, data = dados)
+  cat("Teste t para diferença de médias entre grupos is_safe (", var, "):\n")
+  print(t_result)
+  
+  # Mostrar p-valor no gráfico
+  p + labs(subtitle = paste("p-valor do teste t =", signif(t_result$p.value, 3)))
+})
+
+```
+
+```{r}
+# Função para extrair resultados do t.test em formato tabular
+extrair_t <- function(var, dados) {
+  f <- as.formula(paste(var, "~ is_safe"))
+  tt <- t.test(f, data = dados)
+  
+  media_NAO <- tt$estimate[1]
+  media_SIM <- tt$estimate[2]
+  dif <- media_SIM - media_NAO
+  
+  # Relevância estatística (p-valor)
+  estat <- cut(tt$p.value,
+               breaks = c(-Inf, 0.001, 0.05, Inf),
+               labels = c("Muito relevante", "Relevante", "Pouco relevante"))
+  
+  # Relevância prática (diferença de médias)
+  pratica <- cut(abs(dif),
+                 breaks = c(-Inf, 0.1, 1, Inf),
+                 labels = c("Baixa diferença", "Média diferença", "Alta diferença"))
+  
+  data.frame(
+    variavel = var,
+    #media_grupo_NAO = media_NAO,
+    #media_grupo_SIM = media_SIM,
+    diferenca_medias = dif,
+    t_stat = tt$statistic,
+    p_valor = tt$p.value,
+    #IC95_inf = tt$conf.int[1],
+    #IC95_sup = tt$conf.int[2],
+    relevancia_estatistica = estat,
+    relevancia_diferenca = pratica
+  )
+}
+
+# Aplicar para todas as variáveis numéricas
+tabela_t <- do.call(rbind, lapply(names(numeric_vars), extrair_t, dados = dados))
+
+
+print(tabela_t)
+
+```
+
+### Análise Multivariada
+
+![](images/clipboard-1474266441.png)
+
+## Conclusão
+
+-   Número de Linha : 7996
+
+-   Variável ammonia alterada para num:\
+    \$ ammonia : num 9.08 21.16 14.02 11.33 24.33 ...
+
+-   Rótulo alterado:\
+    \$ is_safe : Factor w/ 2 levels "NÃO","SIM"
+
+-   Pré-Processamento dos dados
+
+    -   Verificar o balanceamento dos dados
+    -   Verificar outliers
+    -   Normalizar os dados
+
+# Pré-processamento
+
+## Balanceamento dos dados
+
+Utilizamos a técnica de undersample para o balanceamento dos dados
+
+```{r}
+#Criando dataset para utilizar no modelo RF.
+dados_full <- dados
+
+# Fazer undersampling para balancear as classes
+set.seed(123)
+dados_under <- ovun.sample(is_safe ~ ., data = dados, method = "under")$data
+
+# Ver distribuição após undersampling
+#table(dados_under$is_safe)
+
+dados <- dados_under
+
+# Frequência e porcentagem
+freq <- table(dados$is_safe)
+porc <- prop.table(freq) * 100
+counts <- table(dados$is_safe)
+
+# Gráfico
+bp <- barplot(porc,
+              ylim = c(0, max(porc) + 5),
+              main = "Rótulos",
+              ylab = "Porcentagem",
+              col = "lightblue")
+
+text(
+  x = bp, 
+  y = porc / 2, 
+  labels = counts, 
+  col = "black", 
+  cex = 0.9
+)
+```
+
+## Seleção de variáveis
+
+Excluímos algumas variáveis que não influênciavam na classificação, pois possuiam valores máximos no dataset menores que o valor limites.
+
+| Variáveis | Diferenca Medias Grupos | t_stat | p_valor | Relevncia Estatistica | Relevancia Diferenca Médias Grupos |
+|------------|-----------:|-----------:|-----------:|------------|------------|
+| flouride | 0.00897176864 | -0.594457 | 5.523211e-01 | Pouco relevante | Baixa diferença |
+| lead | -0.0018242116 | 0.9095015 | 3.632725e-01 | Pouco relevante | Baixa diferença |
+| mercury | -0.0003436321 | 3.2309886 | 1.268728e-03 | Relevante | Baixa diferença |
+| selenium | -0.0027988759 | 2.7878602 | 3.632725e-0 | Relevante | Baixa diferença |
+
+```{r}
+#Excluindo as variáveis
+dados_novo <- dados[, !(names(dados) %in% c("flouride", "mercury", "lead", "selenium "))]
+
+dados <- dados_novo
+str(dados)
+```
+
+## Tratamento outliers
+
+As variáveis Aluminium e Arsenic apresentam valores dentro dos encontrados na literatura não caracterizando outliers.
+
+![](images/clipboard-2497430905.png)
+
+## ![](images/clipboard-1088764234.png)
+
+## Normalização dos dados
+
+A normalização foi realizada com o zscore
+
+```{r}
+features <- dados[, 1:17]
+label <- dados[, 18]
+
+# Padronizar para média 0 e desvio padrão 1
+features_z <- as.data.frame(scale(features))
+# Juntar com o rótulo
+dados_zscore <- cbind(features_z, label)
+dados <- dados_zscore
+str(dados)
+
+```
+
+## - Criada uma semente
+
+## - Criados os df de treino e teste com 70 e 30%
+
+```{r}
+##Criando uma semente
+set.seed(123)
+
+trainIndex <- createDataPartition(dados$label, p = .7, list = F, times = 1)
+dadosTrain <- dados[ trainIndex,]
+dadosTest  <- dados[-trainIndex,]
+
+train <- dadosTrain[,1:18]
+test <- dadosTest[,1:18]
+
+# Verificando os arquivos
+print('Treino')
+str(train)
+print('-------')
+print('Teste')
+str(test)
+
+
+```
+
+# Classisficação(KNN)
+
+## - Avaliamos o melhor K.
+
+```{r}
+ctrl <- trainControl(method = "cv",
+                     number = 5, 
+                     classProbs = TRUE,
+                     summaryFunction = twoClassSummary)
+knnFit <- train(label ~ . ,
+                method     = "knn",
+                trControl  = ctrl,
+                metric = "ROC",
+                data       = train)
+knnFit
+plot(knnFit) # gráfico do desempenho segundo os valores de k
+knnFit$finalModel # melhor modelo
+
+```
+
+## Executando predição do modelo com corte de .50
+
+```{r}
+predknn <- predict(knnFit, test, type = "prob") 
+resultknn <- as.factor(ifelse(predknn[,2] > 0.5,"SIM", "NÃO"))
+
+```
+
+## Analisando desempenho do modelo
+
+### - Matrix de confusão
+
+```{r}
+confusionMatrix(resultknn, test$label,positive = "SIM")
+F_meas(resultknn, test$label, positive = "SIM")
+```
+
+### - Curva ROC e AUC
+
+```{r}
+aucknn <- roc(response = test$label, predictor= predknn[,2])
+plot.roc(aucknn, print.thres = T) # descobrimos o ponto de corte que fornece melhor soma de S e E
+```
+
+### Avalindo outros valores de corte
+
+#### .30
+
+```{r}
+resultknn4 <- as.factor(ifelse(predknn[,2] > 0.30,"SIM","NÃO"))
+confusionMatrix(resultknn4,  test$label, positive = "SIM")
+F_meas(resultknn4, test$label, positive = "SIM")
+```
+
+#### .40
+
+```{r}
+resultknn4 <- as.factor(ifelse(predknn[,2] > 0.40,"SIM","NÃO"))
+confusionMatrix(resultknn4,  test$label, positive = "SIM")
+F_meas(resultknn4, test$label, positive = "SIM")
+```
+
+#### .60
+
+```{r}
+resultknn6 <- as.factor(ifelse(predknn[,2] > 0.60,"SIM","NÃO"))
+confusionMatrix(resultknn6,  test$label, positive = "SIM")
+F_meas(resultknn6, test$label, positive = "SIM")
+```
+
+### Predição do modelo com corte de .50
+
+```{r}
+predictions <- predict(knnFit, newdata=test[,1:17], type="prob")
+ROCRpred <- prediction(predictions[,2], test$label)
+
+ROCRperf <- performance(ROCRpred, measure = "tpr", x.measure = "fpr")
+plot(ROCRperf, colorize = TRUE, text.adj = c(-0.2,1.7), print.cutoffs.at = seq(0,1,0.1))
+
+predictions <- as.factor(ifelse(predknn[,2] > 0.50,"SIM","NÃO"))
+confusionMatrix(predictions,  test$label, positive = "SIM")
+
+auc <- performance(ROCRpred, measure = "auc")
+auc <- auc@y.values[[1]]
+auc
+```
+
+# Resumo
+
+| Pontos           | Valores |
+|------------------|--------:|
+| Número registros |   1,822 |
+| Número variáveis |      17 |
+| Número K         |       9 |
+| Ponto de corte   |    0.50 |
+| Sensibilidade    |  0.8974 |
+| Especificidade   |  0.7380 |
+| Acuracia         |  0.8180 |
+
+|     | **NÃO** | **SIM** |
+|----:|--------:|--------:|
+| NÃO |     200 |      28 |
+| SIM |      71 |     245 |
+
+**Negrito**: Valor de referência
+
+# Classificação( RANDOM FOREST )
+
+## Ajuste dos Parâmetros
+
+```{r}
+### Ajuste dos Parâmetros ###
+# Ajustar manualmente mtry e ntree
+
+customRF <- list(type = "Classification",
+                 library = "randomForest",
+                 loop = NULL)
+
+customRF$parameters <- data.frame(parameter = c("mtry", "ntree"),
+                                  class = rep("numeric", 2),
+                                  label = c("mtry", "ntree"))
+
+customRF$grid <- function(x, y, len = NULL, search = "grid") {}
+
+customRF$fit <- function(x, y, wts, param, lev, last, weights, classProbs) {
+  randomForest(x, y,
+               mtry = param$mtry,
+               ntree=param$ntree)
+}
+```
+
+```{r}
+# Predizer a classe
+customRF$predict <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  predict(modelFit, newdata)
+```
+
+```{r}
+# Predizer a probabilidade
+customRF$prob <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  predict(modelFit, newdata, type = "prob")
+
+customRF$sort <- function(x) x[order(x[,1]),]
+customRF$levels <- function(x) x$classes
+```
+
+## Validação cruzada - 5-fold - mtry = 8 - ntree = (500,1000,1500)
+
+```{r}
+# Vamos utilizar uma validação-cruzada 5-fold
+ctrl <- trainControl(method = "cv", 
+                     number = 5,
+                     allowParallel = T) # paralelizar
+
+grid <- expand.grid(.mtry = c(1:8), # número de variáveis
+                    .ntree = c(500, 1000, 1500)) # número de árvores
+
+rfFit <- train(label ~ .,
+               method = customRF, 
+               tuneGrid = grid, 
+               trControl = ctrl,
+               metric = "Accuracy",
+               data = train) 
+rfFit
+plot(rfFit)
+plot(rfFit$finalModel) # erro OOB
+legend("topright", colnames(rfFit$finalModel$err.rate), 
+       col = 1:3, 
+       cex = 0.8, 
+       fill = 1:3)
+summary(rfFit)
+```
+
+```{r}
+# Vamos utilizar uma validação-cruzada 10-fold
+ctrl <- trainControl(method = "cv", 
+                     number = 10,
+                     allowParallel = T) # paralelizar
+
+grid <- expand.grid(.mtry = c(1:8), # número de variáveis
+                    .ntree = c(500, 1000, 1500)) # número de árvores
+
+rfFit <- train(label ~ .,
+               method = customRF, 
+               tuneGrid = grid, 
+               trControl = ctrl,
+               metric = "Accuracy",
+               data = train) 
+rfFit
+plot(rfFit)
+plot(rfFit$finalModel) # erro OOB
+legend("topright", colnames(rfFit$finalModel$err.rate), 
+       col = 1:3, 
+       cex = 0.8, 
+       fill = 1:3)
+summary(rfFit)
+```
+
+```{r}
+# Vamos utilizar uma validação-cruzada 15-fold
+ctrl <- trainControl(method = "cv", 
+                     number = 15,
+                     allowParallel = T) # paralelizar
+
+grid <- expand.grid(.mtry = c(1:8), # número de variáveis
+                    .ntree = c(200, 500, 1000)) # número de árvores
+
+rfFit <- train(label ~ .,
+               method = customRF, 
+               tuneGrid = grid, 
+               trControl = ctrl,
+               metric = "Accuracy",
+               data = train) 
+rfFit
+plot(rfFit)
+plot(rfFit$finalModel) # erro OOB
+legend("topright", colnames(rfFit$finalModel$err.rate), 
+       col = 1:3, 
+       cex = 0.8, 
+       fill = 1:3)
+summary(rfFit)
+```
+
+## Executando o modelo - mtry = 8 - ntree = 1000
+
+```{r}
+### Importância das Variáveis ###
+
+
+rf <- randomForest(label ~ ., data = train, 
+                   importance = T, mtry = 8, ntree = 1000)
+
+# MeanDecreaseAccuracy: permutação
+importance(rf, type = 1)
+
+# MeanDecreaseGini: diminuição total nas impurezas do nó da divisão na variável, calculada em média para todas as árvores
+importance(rf, type = 2)
+
+# Gráfico da importância das variáveis
+varImpPlot(rf, sort = T)
+
+# Quantas vezes cada variável explicativa foi utilizada na construção das árvores
+varUsed(rf, count = T)
+
+```
+
+## Predição
+
+```{r}
+### Predições .5 ###
+
+predrf <- predict(rf, test, type = "prob") 
+resultrf <- as.factor(ifelse(predrf[,2] > 0.5,"SIM","NÃO"))
+```
+
+```{r}
+### Desempenho do modelo .5###
+
+# Matriz de confusão e medidas
+confusionMatrix(resultrf, test$label, positive = "SIM")
+```
+
+## Curva ROC e AUC
+
+```{r}
+# Curva ROC e AUC
+
+aucrf <- roc(test$label, predrf[,2])
+plot.roc(aucrf, print.thres = T) # descobrimos o ponto de corte que fornece melhor soma de S e E
+
+```
+
+## Alterando o ponto de corte
+
+```{r}
+### Predições ###
+
+predrf <- predict(rf, test, type = "prob") 
+resultrf <- as.factor(ifelse(predrf[,2] > 0.436,"SIM","NÃO"))
+```
+
+```{r}
+
+### Desempenho do modelo ###
+
+# Matriz de confusão e medidas
+confusionMatrix(resultrf, test$label, positive = "SIM")
+
+ci.auc(aucrf)
+ci.thresholds(aucrf, threshold = 0.436)
+
+```
+
+# Resultados
+
+## KNN
+
+Matriz de confusão:
+
+|     | **NÃO** | **SIM** |
+|----:|--------:|--------:|
+| NÃO |     199 |      21 |
+| SIM |      72 |     252 |
+
+| Estatística    |          Valores |
+|----------------|-----------------:|
+| Acuracia       |            0.829 |
+| 95% IC         | (0.7947, 0.8597) |
+| Sensibilidade  |           0.9232 |
+| Especificidade |           0.7343 |
+
+## Random Forest
+
+Matriz de confusão:
+
+|     | **NÃO** | **SIM** |
+|----:|--------:|--------:|
+| NÃO |     239 |      10 |
+| SIM |      32 |     263 |
+
+| Estatística    |          Valores |
+|----------------|-----------------:|
+| Acuracia       |           0.9238 |
+| 95% IC         | (0.8971, 0.9438) |
+| Sensibilidade  |           0.9634 |
+| Especificidade |           0.8819 |
+
+# Conclusão
+
+-   O RF foi o modelo de melhor performance;
+-   Os valores obtidos na acurácia, sensibilidade e especificidade validam o modelo para fins acadêmicos.
+-   É necessário a utilização de dados reais para melhor avaliação do modelo;
+-   Alteração do ponto de corte deve ser avaliada para melhorar a sensibilidade.
